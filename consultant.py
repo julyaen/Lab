@@ -1,36 +1,45 @@
 import duckdb
 import os
 
-# 1. Path to your file
-CSV_FILE = r"C:\NQ_Agent\live_nq.txt" 
+# CONFIGURATION
+TXT_FILE = r"C:\NQ_Agent\live_nq.txt"
+DB_FILE = "trading_research.db"
 
-def test_connection():
-    print(f"--- Debugging ---")
+def sync_data():
+    """Moves new bars from the Text file to the SQL Database"""
+    print("--- Checking for new market data ---")
     
-    # Check if file exists
-    if not os.path.exists(CSV_FILE):
-        print(f"ERROR: File not found at {CSV_FILE}")
-        return
-
-    print("SUCCESS: File found!")
-
-    # 2. Your SQL Query - Written clearly
-    # We use f-string (the 'f' before the quotes) to insert the filename
-    sql = f"""
-        SELECT * FROM read_csv_auto('{CSV_FILE}') 
-        ORDER BY 1 DESC, 2 DESC
-        LIMIT 12
-    """
-
+    # Connect to your new Database
+    con = duckdb.connect(DB_FILE)
+    
     try:
-        # 3. Execute the query
-        data = duckdb.query(sql).df()
-        print("--- Latest 10 Bars (Newest First) ---")
-        print(data)
+        # This clever SQL command only inserts rows that DON'T exist in the DB yet
+        # It uses 'Date' and 'Time' as the unique fingerprint for each bar
+        sync_sql = f"""
+            INSERT INTO nq_data 
+            SELECT * FROM read_csv_auto('{TXT_FILE}')
+            WHERE NOT EXISTS (
+                SELECT 1 FROM nq_data 
+                WHERE nq_data.Date = read_csv_auto.Date 
+                AND nq_data.Time = read_csv_auto.Time
+            )
+        """
+        con.execute(sync_sql)
+        print("Sync Complete: Database is now up-to-date with Sierra Chart.")
         
     except Exception as e:
-        print(f"SQL ERROR: Something is wrong with the query logic.")
-        print(f"Details: {e}")
+        print(f"Sync Error: {e}")
+    finally:
+        con.close()
 
-# Run the function
-test_connection()
+def run_analysis():
+    """Run a quick test to see the newest bars in the DB"""
+    con = duckdb.connect(DB_FILE)
+    df = con.execute("SELECT * FROM nq_data ORDER BY Date DESC, Time DESC LIMIT 5").df()
+    print("\n--- Current Market Context (from SQL) ---")
+    print(df)
+    con.close()
+
+# RUN BOTH
+sync_data()
+run_analysis()
